@@ -1,6 +1,6 @@
 # Phase DataHub M0 RPC evidence
 
-`fixtures/phase-mainnet/manifest.json` records the endpoint, request, receipt time, status and corresponding byte-for-byte response files. The fixtures were captured directly from the Phase mainnet HTTPS endpoint.
+`fixtures/phase-mainnet/manifest.json` records each request, its endpoint and receipt time, and the SHA-256 of the original response body. The test suite checks each capture against the manifest. The fixtures were captured directly from the Phase mainnet HTTPS endpoint.
 
 | Request | Observed result |
 | --- | --- |
@@ -27,4 +27,4 @@ The reference documents oldest-first results, the default 10,000-view memory win
 - A live two-page smoke test persisted 108 distinct projections across a collector restart. The checkpoint moved from 8294976 to 8295030. The actual local HTTP endpoint returned 200 and 20 records. The response included source-reported latest block 8290013 and finalized block 8290011.
 - A separate live `[null, 10000]` probe returned 3,781,141 bytes and 10,000 wire entries. These reduced to 9,568 unique view IDs, including 432 repeated observations. The minimum returned ID was 8295032. After projection the response contained 9,567 full certificate observations and one record with no certificate. The full-window capture was kept with the local test data.
 - After the live source rolled beyond checkpoint 8295030, the collector resumed at 8295207. The HTTP API reported gap 8295031–8295152 as `unrecoverable_from_source`, a sampled floor of 8295157, and one collector observation gap. The database linked the interval to its 3,780,822-byte raw retention response. The observed page had already provided views below the later probe floor, and those saved views were excluded from the unrecoverable interval. The run recovered from one RPC timeout.
-- The repository review added coverage for oversized RPC bodies and truncated retention probes on custom endpoints. All 29 tests passed.
+- The test suite covers oversized RPC bodies, truncated retention probes on custom endpoints, and fixture integrity.

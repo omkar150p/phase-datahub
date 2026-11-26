@@ -1,9 +1,31 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { once } from "node:events";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { MAX_UINT64, RpcError } from "../src/phase-rpc.js";
 import { fixture, mockServer, reply, wireView } from "./support.js";
+
+test("captured RPC responses match their manifest", () => {
+  const directory = new URL("../../fixtures/phase-mainnet/", import.meta.url);
+  const manifest = JSON.parse(readFileSync(new URL("manifest.json", directory), "utf8")) as {
+    file: string;
+    sha256: string;
+    request: { id: number };
+  }[];
+  assert.ok(Array.isArray(manifest) && manifest.length > 0);
+  const files = new Set<string>();
+  for (const entry of manifest) {
+    assert.match(entry.file, /^[a-z0-9-]+\.json$/);
+    assert.ok(!files.has(entry.file), "duplicate capture " + entry.file);
+    files.add(entry.file);
+    const body = readFileSync(new URL(entry.file, directory));
+    const sha256 = createHash("sha256").update(body).digest("hex");
+    assert.equal(sha256, entry.sha256, entry.file);
+    assert.equal(JSON.parse(body.toString("utf8")).id, entry.request.id, entry.file);
+  }
+});
 
 test("decodes byte-for-byte live Phase view fixture with independent signer fields", async () => {
   const wire = fixture("view-range");
