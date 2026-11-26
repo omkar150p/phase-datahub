@@ -1,0 +1,179 @@
+[
+  {
+    "file": "chain-id.json",
+    "endpoint": "https://rpc-main.phase.xyz",
+    "observedAt": "2026-11-26T17:31:57.9075945+00:00",
+    "status": 200,
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "eth_chainId",
+      "params": []
+    }
+  },
+  {
+    "file": "genesis-block.json",
+    "endpoint": "https://rpc-main.phase.xyz",
+    "observedAt": "2026-11-26T17:31:58.8852820+00:00",
+    "status": 200,
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "eth_getBlockByNumber",
+      "params": [
+        "0x0",
+        false
+      ]
+    }
+  },
+  {
+    "file": "oldest-views.json",
+    "endpoint": "https://rpc-main.phase.xyz",
+    "observedAt": "2026-11-26T17:31:59.4579680+00:00",
+    "status": 200,
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "phase_getViewRecords",
+      "params": [
+        null,
+        3
+      ]
+    }
+  },
+  {
+    "file": "view-range.json",
+    "endpoint": "https://rpc-main.phase.xyz",
+    "observedAt": "2026-11-26T17:31:59.9181977+00:00",
+    "status": 200,
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "phase_getViewRecords",
+      "params": [
+        8289719,
+        3
+      ]
+    }
+  },
+  {
+    "file": "inclusive-cursor.json",
+    "endpoint": "https://rpc-main.phase.xyz",
+    "observedAt": "2026-11-26T17:32:00.3753634+00:00",
+    "status": 200,
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 5,
+      "method": "phase_getViewRecords",
+      "params": [
+        8289720,
+        2
+      ]
+    }
+  },
+  {
+    "file": "next-page.json",
+    "endpoint": "https://rpc-main.phase.xyz",
+    "observedAt": "2026-11-26T17:32:00.8171000+00:00",
+    "status": 200,
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 6,
+      "method": "phase_getViewRecords",
+      "params": [
+        8289722,
+        2
+      ]
+    }
+  },
+  {
+    "file": "before-retention-floor.json",
+    "endpoint": "https://rpc-main.phase.xyz",
+    "observedAt": "2026-11-26T17:32:01.2465917+00:00",
+    "status": 200,
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 7,
+      "method": "phase_getViewRecords",
+      "params": [
+        8279619,
+        1
+      ]
+    }
+  },
+  {
+    "file": "future-cursor-empty.json",
+    "endpoint": "https://rpc-main.phase.xyz",
+    "observedAt": "2026-11-26T17:32:01.6928771+00:00",
+    "status": 200,
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 8,
+      "method": "phase_getViewRecords",
+      "params": [
+        9000000000000,
+        1
+      ]
+    }
+  },
+  {
+    "file": "latest-block.json",
+    "endpoint": "https://rpc-main.phase.xyz",
+    "observedAt": "2026-11-26T17:32:02.1255101+00:00",
+    "status": 200,
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 9,
+      "method": "eth_getBlockByNumber",
+      "params": [
+        "latest",
+        false
+      ]
+    }
+  },
+  {
+    "file": "finalized-block.json",
+    "endpoint": "https://rpc-main.phase.xyz",
+    "observedAt": "2026-11-26T17:32:02.5706837+00:00",
+    "status": 200,
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 10,
+      "method": "eth_getBlockByNumber",
+      "params": [
+        "finalized",
+        false
+      ]
+    }
+  },
+  {
+    "file": "live-order-11.json",
+    "endpoint": "https://rpc-main.phase.xyz",
+    "observedAt": "2026-11-26T17:56:35.544Z",
+    "status": 200,
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 11,
+      "method": "phase_getViewRecords",
+      "params": [
+        null,
+        60
+      ]
+    }
+  },
+  {
+    "file": "live-order-12.json",
+    "endpoint": "https://rpc-main.phase.xyz",
+    "observedAt": "2026-11-26T17:56:35.786Z",
+    "status": 200,
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 12,
+      "method": "phase_getViewRecords",
+      "params": [
+        8294779,
+        60
+      ]
+    }
+  }
+]

@@ -1,0 +1,2 @@
+* text=auto eol=lf
+fixtures/phase-mainnet/*.json -text

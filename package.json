@@ -1,0 +1,29 @@
+{
+  "name": "phase-datahub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "db:migrate": "node dist/src/migrate.js",
+    "collector": "node dist/src/collector-main.js",
+    "api": "node dist/src/api-main.js",
+    "test": "npm run build && node --test dist/test/rpc.test.js dist/test/collector.integration.test.js",
+    "test:unit": "npm run build && node --test dist/test/rpc.test.js",
+    "test:integration": "npm run build && node --test dist/test/collector.integration.test.js"
+  },
+  "dependencies": {
+    "fastify": "5.12.8",
+    "lossless-json": "4.3.4",
+    "p-limit": "6.2.0",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.43",
+    "@types/pg": "8.23.1",
+    "typescript": "5.9.3"
+  }
+}
