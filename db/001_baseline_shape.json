@@ -1,0 +1,167 @@
+{
+  "block_head_observations": {
+    "type": "r",
+    "columns": [
+      ["response_id","bigint",true,"","",null],
+      ["source_id","integer",true,"","",null],
+      ["tag","text",true,"","",null],
+      ["height","numeric(20,0)",true,"","",null],
+      ["hash","text",true,"","",null],
+      ["block_timestamp_secs","numeric(20,0)",true,"","",null]
+    ],
+    "indexes": [
+      ["block_head_observations_pkey","btree",true,true,null,["response_id"]],
+      ["heads_by_source_tag","btree",false,true,null,["source_id","tag","response_id"]]
+    ],
+    "constraints": [
+      ["block_head_observations_block_timestamp_secs_check","c","CHECK ((block_timestamp_secs >= (0)::numeric))",true],
+      ["block_head_observations_hash_check","c","CHECK ((hash ~ '^0x[0-9a-f]{64}$'::text))",true],
+      ["block_head_observations_height_check","c","CHECK ((height >= (0)::numeric))",true],
+      ["block_head_observations_pkey","p","PRIMARY KEY (response_id)",true],
+      ["block_head_observations_source_id_fkey","f","FOREIGN KEY (source_id) REFERENCES sources(id)",true],
+      ["block_head_observations_source_id_response_id_fkey","f","FOREIGN KEY (source_id, response_id) REFERENCES rpc_responses(source_id, id)",true],
+      ["block_head_observations_tag_check","c","CHECK ((tag = ANY (ARRAY['latest'::text, 'finalized'::text])))",true]
+    ]
+  },
+  "collector_checkpoints": {
+    "type": "r",
+    "columns": [
+      ["source_id","integer",true,"","",null],
+      ["revision","bigint",true,"","","0"],
+      ["high_view_id","numeric(20,0)",false,"","",null],
+      ["last_success_at","timestamp with time zone",false,"","",null],
+      ["last_retention_probe_at","timestamp with time zone",false,"","",null],
+      ["retention_floor_view_id","numeric(20,0)",false,"","",null],
+      ["retention_floor_response_id","bigint",false,"","",null]
+    ],
+    "indexes": [
+      ["collector_checkpoints_pkey","btree",true,true,null,["source_id"]]
+    ],
+    "constraints": [
+      ["collector_checkpoints_high_view_id_check","c","CHECK ((high_view_id >= (0)::numeric))",true],
+      ["collector_checkpoints_pkey","p","PRIMARY KEY (source_id)",true],
+      ["collector_checkpoints_retention_floor_view_id_check","c","CHECK ((retention_floor_view_id >= (0)::numeric))",true],
+      ["collector_checkpoints_source_id_fkey","f","FOREIGN KEY (source_id) REFERENCES sources(id)",true],
+      ["collector_checkpoints_source_id_retention_floor_response_i_fkey","f","FOREIGN KEY (source_id, retention_floor_response_id) REFERENCES rpc_responses(source_id, id)",true]
+    ]
+  },
+  "collector_observation_gaps": {
+    "type": "r",
+    "columns": [
+      ["id","bigint",true,"a","",null],
+      ["source_id","integer",true,"","",null],
+      ["after_success_at","timestamp with time zone",true,"","",null],
+      ["resumed_at","timestamp with time zone",true,"","",null],
+      ["evidence_response_id","bigint",true,"","",null]
+    ],
+    "indexes": [
+      ["collector_observation_gaps_pkey","btree",true,true,null,["id"]],
+      ["observation_gaps_by_source","btree",false,true,null,["source_id","resumed_at"]]
+    ],
+    "constraints": [
+      ["collector_observation_gaps_check","c","CHECK ((resumed_at > after_success_at))",true],
+      ["collector_observation_gaps_pkey","p","PRIMARY KEY (id)",true],
+      ["collector_observation_gaps_source_id_evidence_response_id_fkey","f","FOREIGN KEY (source_id, evidence_response_id) REFERENCES rpc_responses(source_id, id)",true],
+      ["collector_observation_gaps_source_id_fkey","f","FOREIGN KEY (source_id) REFERENCES sources(id)",true]
+    ]
+  },
+  "consensus_views": {
+    "type": "r",
+    "columns": [
+      ["source_id","integer",true,"","",null],
+      ["view_id","numeric(20,0)",true,"","",null],
+      ["view_timestamp_secs","numeric(20,0)",true,"","",null],
+      ["block_height","numeric(20,0)",false,"","",null],
+      ["certificate_status","text",true,"","",null],
+      ["normalized_record","jsonb",true,"","",null],
+      ["first_response_id","bigint",true,"","",null],
+      ["current_response_id","bigint",true,"","",null],
+      ["first_observed_at","timestamp with time zone",true,"","",null],
+      ["last_observed_at","timestamp with time zone",true,"","",null],
+      ["last_updated_at","timestamp with time zone",true,"","","clock_timestamp()"],
+      ["ingested_at","timestamp with time zone",true,"","","clock_timestamp()"]
+    ],
+    "indexes": [
+      ["consensus_views_pkey","btree",true,true,null,["source_id","view_id"]]
+    ],
+    "constraints": [
+      ["consensus_views_block_height_check","c","CHECK ((block_height >= (0)::numeric))",true],
+      ["consensus_views_certificate_status_check","c","CHECK ((certificate_status = ANY (ARRAY['tentative'::text, 'full'::text, 'none'::text])))",true],
+      ["consensus_views_pkey","p","PRIMARY KEY (source_id, view_id)",true],
+      ["consensus_views_source_id_current_response_id_fkey","f","FOREIGN KEY (source_id, current_response_id) REFERENCES rpc_responses(source_id, id)",true],
+      ["consensus_views_source_id_first_response_id_fkey","f","FOREIGN KEY (source_id, first_response_id) REFERENCES rpc_responses(source_id, id)",true],
+      ["consensus_views_source_id_fkey","f","FOREIGN KEY (source_id) REFERENCES sources(id)",true],
+      ["consensus_views_view_id_check","c","CHECK ((view_id >= (0)::numeric))",true],
+      ["consensus_views_view_timestamp_secs_check","c","CHECK ((view_timestamp_secs >= (0)::numeric))",true]
+    ]
+  },
+  "rpc_responses": {
+    "type": "r",
+    "columns": [
+      ["id","bigint",true,"a","",null],
+      ["source_id","integer",true,"","",null],
+      ["method","text",true,"","",null],
+      ["purpose","text",true,"","",null],
+      ["request_body","text",true,"","",null],
+      ["response_body","bytea",true,"","",null],
+      ["observed_at","timestamp with time zone",true,"","",null],
+      ["ingested_at","timestamp with time zone",true,"","","clock_timestamp()"]
+    ],
+    "indexes": [
+      ["rpc_responses_pkey","btree",true,true,null,["id"]],
+      ["rpc_responses_source_id_id_key","btree",true,true,null,["source_id","id"]]
+    ],
+    "constraints": [
+      ["rpc_responses_pkey","p","PRIMARY KEY (id)",true],
+      ["rpc_responses_purpose_check","c","CHECK ((purpose = ANY (ARRAY['chain_identity'::text, 'view_page'::text, 'retention_probe'::text, 'latest_head'::text, 'finalized_head'::text, 'superseded_poll'::text])))",true],
+      ["rpc_responses_source_id_fkey","f","FOREIGN KEY (source_id) REFERENCES sources(id)",true],
+      ["rpc_responses_source_id_id_key","u","UNIQUE (source_id, id)",true]
+    ]
+  },
+  "sources": {
+    "type": "r",
+    "columns": [
+      ["id","integer",true,"a","",null],
+      ["endpoint","text",true,"","",null],
+      ["chain_id","numeric(20,0)",true,"","",null],
+      ["genesis_hash","text",true,"","",null]
+    ],
+    "indexes": [
+      ["sources_endpoint_chain_id_genesis_hash_key","btree",true,true,null,["endpoint","chain_id","genesis_hash"]],
+      ["sources_pkey","btree",true,true,null,["id"]]
+    ],
+    "constraints": [
+      ["sources_chain_id_check","c","CHECK ((chain_id >= (0)::numeric))",true],
+      ["sources_endpoint_chain_id_genesis_hash_key","u","UNIQUE (endpoint, chain_id, genesis_hash)",true],
+      ["sources_genesis_hash_check","c","CHECK ((genesis_hash ~ '^0x[0-9a-f]{64}$'::text))",true],
+      ["sources_pkey","p","PRIMARY KEY (id)",true]
+    ]
+  },
+  "view_gaps": {
+    "type": "r",
+    "columns": [
+      ["id","bigint",true,"a","",null],
+      ["source_id","integer",true,"","",null],
+      ["first_view_id","numeric(20,0)",true,"","",null],
+      ["last_view_id","numeric(20,0)",true,"","",null],
+      ["state","text",true,"","",null],
+      ["detected_at","timestamp with time zone",true,"","",null],
+      ["evidence_response_id","bigint",true,"","",null],
+      ["superseded_at","timestamp with time zone",false,"","",null],
+      ["supersedes_gap_id","bigint",false,"","",null]
+    ],
+    "indexes": [
+      ["active_view_gaps_by_source","btree",false,true,"(superseded_at IS NULL)",["source_id","first_view_id","last_view_id"]],
+      ["view_gaps_pkey","btree",true,true,null,["id"]]
+    ],
+    "constraints": [
+      ["view_gaps_check","c","CHECK ((last_view_id >= first_view_id))",true],
+      ["view_gaps_first_view_id_check","c","CHECK ((first_view_id >= (0)::numeric))",true],
+      ["view_gaps_pkey","p","PRIMARY KEY (id)",true],
+      ["view_gaps_source_id_evidence_response_id_fkey","f","FOREIGN KEY (source_id, evidence_response_id) REFERENCES rpc_responses(source_id, id)",true],
+      ["view_gaps_source_id_fkey","f","FOREIGN KEY (source_id) REFERENCES sources(id)",true],
+      ["view_gaps_state_check","c","CHECK ((state = ANY (ARRAY['candidate_sequence_gap'::text, 'unrecoverable_from_source'::text])))",true],
+      ["view_gaps_supersedes_gap_id_fkey","f","FOREIGN KEY (supersedes_gap_id) REFERENCES view_gaps(id)",true]
+    ]
+  }
+}

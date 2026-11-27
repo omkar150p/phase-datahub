@@ -1,8 +1,7 @@
-import { readFile } from "node:fs/promises";
 import { Pool, type PoolClient } from "pg";
-import {
-  type ConsensusView, type Head, type HeadTag, type RpcEvidence, type RpcResult, type ViewPage,
-} from "./phase-rpc.js";
+import { type Head, type HeadTag, type RpcEvidence, type RpcResult, type ViewPage } from "./phase-rpc.js";
+import { indexViewResponse } from "./observation-index.js";
+import { applyMigrations } from "./schema-migrations.js";
 import { classifyRanges, newSequenceGaps, removeObserved, type GapState, type Range } from "./gaps.js";
 
 export interface Checkpoint {
@@ -59,11 +58,7 @@ export async function transaction<T>(
 }
 
 export async function migrate(pool: Pool): Promise<void> {
-  const schema = await readFile(new URL("../../db/001_init.sql", import.meta.url), "utf8");
-  await transaction(pool, async (client) => {
-    await client.query("SELECT pg_advisory_xact_lock(656157301)");
-    await client.query(schema);
-  });
+  await transaction(pool, applyMigrations);
 }
 
 async function archive(
@@ -75,6 +70,14 @@ async function archive(
     [sourceId, evidence.method, purpose, evidence.requestBody, evidence.rawResponse, evidence.observedAt],
   );
   return out.rows[0]!.id;
+}
+
+async function archiveViewPage(
+  client: PoolClient, sourceId: number, purpose: ResponsePurpose, page: ViewPage,
+): Promise<string> {
+  const responseId = await archive(client, sourceId, purpose, page);
+  await indexViewResponse(client, sourceId, responseId, page.occurrences);
+  return responseId;
 }
 
 async function addGap(
@@ -93,15 +96,21 @@ async function addGap(
 }
 
 async function persistViews(
-  client: PoolClient, sourceId: number, page: RpcResult<ConsensusView[]>, pageId: string,
+  client: PoolClient, sourceId: number, page: ViewPage, pageId: string,
 ): Promise<void> {
   if (page.result.length === 0) return;
+  const inputs = page.result.map((record) => {
+    const responseIndex = page.projectionIndexes.get(record.viewId);
+    if (responseIndex === undefined) throw new Error("Missing projected occurrence for view " + record.viewId);
+    return { record, responseIndex };
+  });
   await client.query(
     `WITH incoming AS (
-      SELECT value AS record, (value->>'viewId')::numeric AS view_id
+      SELECT value->'record' AS record, (value->'record'->>'viewId')::numeric AS view_id,
+        (value->>'responseIndex')::integer AS response_index
       FROM jsonb_array_elements($2::jsonb)
     ), projection AS (
-      SELECT incoming.view_id,
+      SELECT incoming.view_id, incoming.response_index,
         CASE WHEN
           (existing.certificate_status = 'full' AND incoming.record->>'certificateStatus' <> 'full')
           OR (existing.certificate_status = 'tentative' AND incoming.record->>'certificateStatus' = 'none')
@@ -113,10 +122,10 @@ async function persistViews(
     )
     INSERT INTO consensus_views (
       source_id, view_id, view_timestamp_secs, block_height, certificate_status, normalized_record,
-      first_response_id, current_response_id, first_observed_at, last_observed_at
+      first_response_id, current_response_id, current_response_index, first_observed_at, last_observed_at
     )
     SELECT $1, view_id, (record->>'viewTimestampSecs')::numeric, (record->>'blockHeight')::numeric,
-      record->>'certificateStatus', record, $3, $3, $4, $4
+      record->>'certificateStatus', record, $3, $3, response_index, $4, $4
     FROM projection
     ON CONFLICT (source_id, view_id) DO UPDATE SET
       view_timestamp_secs = EXCLUDED.view_timestamp_secs,
@@ -126,9 +135,11 @@ async function persistViews(
       last_observed_at = GREATEST(consensus_views.last_observed_at, EXCLUDED.last_observed_at),
       current_response_id = CASE WHEN consensus_views.normalized_record IS DISTINCT FROM EXCLUDED.normalized_record
         THEN EXCLUDED.current_response_id ELSE consensus_views.current_response_id END,
+      current_response_index = CASE WHEN consensus_views.normalized_record IS DISTINCT FROM EXCLUDED.normalized_record
+        THEN EXCLUDED.current_response_index ELSE consensus_views.current_response_index END,
       last_updated_at = CASE WHEN consensus_views.normalized_record IS DISTINCT FROM EXCLUDED.normalized_record
         THEN clock_timestamp() ELSE consensus_views.last_updated_at END`,
-    [sourceId, JSON.stringify(page.result), pageId, page.observedAt],
+    [sourceId, JSON.stringify(inputs), pageId, page.observedAt],
   );
 }
 
@@ -217,7 +228,7 @@ export class ArchiveDatabase {
   async commitPoll(
     sourceId: number,
     expectedRevision: string,
-    page: RpcResult<ConsensusView[]>,
+    page: ViewPage,
     retention: { page: ViewPage; complete: boolean } | undefined,
     observationGapMs: number,
   ): Promise<{ committed: boolean; highViewId: string | null }> {
@@ -227,13 +238,13 @@ export class ArchiveDatabase {
       const previous = locked.rows[0];
       if (!previous) throw new Error("Phase source has no checkpoint");
       if (previous.revision !== expectedRevision) {
-        await archive(client, sourceId, "superseded_poll", page);
-        if (probe) await archive(client, sourceId, "superseded_poll", probe);
+        await archiveViewPage(client, sourceId, "superseded_poll", page);
+        if (probe) await archiveViewPage(client, sourceId, "superseded_poll", probe);
         return { committed: false, highViewId: previous.highViewId };
       }
 
-      const pageId = await archive(client, sourceId, "view_page", page);
-      const probeId = probe && await archive(client, sourceId, "retention_probe", probe);
+      const pageId = await archiveViewPage(client, sourceId, "view_page", page);
+      const probeId = probe && await archiveViewPage(client, sourceId, "retention_probe", probe);
       const earliest = retention?.complete ? probe?.result[0] : undefined;
       const floor = earliest && probe && probeId
         ? { view: BigInt(earliest.viewId), responseId: probeId, observedAt: probe.observedAt }

@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { after, before, beforeEach, test } from "node:test";
 import type { Pool } from "pg";
 import { buildApi } from "../src/api.js";
 import { Collector, type CollectorOptions } from "../src/collector.js";
 import { ArchiveDatabase, createPool, migrate } from "../src/database.js";
-import { fixtureResult, mockPhase, mockServer, quiet, reply, wireView } from "./support.js";
+import { backfillObservations, inspectViewObservations } from "../src/observation-tools.js";
+import { fixture, fixtureResult, mockPhase, mockServer, quiet, reply, wireView, type WireView } from "./support.js";
 
 const schema = "phase_test_" + randomUUID().replaceAll("-", "");
 let admin: Pool | undefined;
@@ -62,6 +64,204 @@ async function activeGaps() {
     "WHERE superseded_at IS NULL ORDER BY first_view_id";
   return (await pool.query(query)).rows.map((gap) => [gap.first_view_id, gap.last_view_id, gap.state]);
 }
+
+async function inUpgradeSchema(work: (upgrade: Pool) => Promise<void>) {
+  const name = "phase_upgrade_" + randomUUID().replaceAll("-", "");
+  await admin!.query("CREATE SCHEMA " + name);
+  const upgrade = createPool(process.env.TEST_DATABASE_URL!, "-c search_path=" + name);
+  try {
+    await work(upgrade);
+  } finally {
+    await upgrade.end();
+    await admin!.query("DROP SCHEMA " + name + " CASCADE");
+  }
+}
+
+async function installLegacy(pool: Pool) {
+  await pool.query(await readFile(new URL("../../db/001_init.sql", import.meta.url), "utf8"));
+}
+
+test("versioned migrations adopt a populated original schema and serialize concurrent upgrades", async () => {
+  await inUpgradeSchema(async (upgrade) => {
+    await installLegacy(upgrade);
+    const legacy = new ArchiveDatabase(upgrade);
+    const mock = await mockPhase();
+    try {
+      const rpc = mock.rpc();
+      const source = await legacy.registerSource(rpc.endpoint, await rpc.getIdentity());
+      const raw = Buffer.from(fixture("live-order-11"));
+      const request = JSON.stringify({ id: 11, jsonrpc: "2.0", method: "phase_getViewRecords", params: [null, 60] });
+      const inserted = await upgrade.query(
+        "INSERT INTO rpc_responses(source_id, method, purpose, request_body, response_body, observed_at) " +
+        "VALUES($1, 'phase_getViewRecords', 'view_page', $2, $3, now()) RETURNING id", [source, request, raw],
+      );
+      const response = inserted.rows[0].id;
+      await upgrade.query("UPDATE collector_checkpoints SET high_view_id=8294237,revision=4 WHERE source_id=$1", [source]);
+      await upgrade.query(
+        "INSERT INTO consensus_views(source_id,view_id,view_timestamp_secs,certificate_status,normalized_record," +
+        "first_response_id,current_response_id,first_observed_at,last_observed_at) " +
+        "VALUES($1,8294199,1795712686,'full','{}',$2,$2,now(),now())", [source, response],
+      );
+      const checkpoint = await legacy.checkpoint(source);
+      await Promise.all([migrate(upgrade), migrate(upgrade)]);
+      await migrate(upgrade);
+
+      const { rows } = await upgrade.query("SELECT version,name FROM schema_migrations ORDER BY version");
+      assert.deepEqual(rows, [
+        { version: 1, name: "001_init.sql" }, { version: 2, name: "002_observation_integrity.sql" },
+      ]);
+      assert.deepEqual(await legacy.checkpoint(source), checkpoint);
+      assert.deepEqual((await upgrade.query("SELECT response_body FROM rpc_responses WHERE id=$1", [response])).rows[0].response_body, raw);
+      assert.deepEqual((await upgrade.query("SELECT normalized_record, current_response_index FROM consensus_views")).rows[0],
+        { normalized_record: {}, current_response_index: null });
+      assert.deepEqual(await backfillObservations(upgrade, 1), { indexed: 1, unsupported: 0, occurrences: 60 });
+      assert.deepEqual(await backfillObservations(upgrade, 1), { indexed: 0, unsupported: 0, occurrences: 0 });
+      assert.deepEqual(await legacy.checkpoint(source), checkpoint);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("unexpected legacy indexes and changed migration checksums are rejected", async () => {
+  await inUpgradeSchema(async (upgrade) => {
+    await installLegacy(upgrade);
+    await upgrade.query("DROP INDEX active_view_gaps_by_source");
+    await assert.rejects(migrate(upgrade), /Cannot adopt baseline.*view_gaps/);
+    const { rows } = await upgrade.query("SELECT to_regclass('schema_migrations') AS ledger");
+    assert.equal(rows[0].ledger, null);
+  });
+  await inUpgradeSchema(async (upgrade) => {
+    await migrate(upgrade);
+    await upgrade.query("UPDATE schema_migrations SET sha256=repeat('0',64) WHERE version=1");
+    await assert.rejects(migrate(upgrade), /does not match the repository at version 1/);
+  });
+});
+
+test("a failed migration rolls back the baseline DDL and version ledger", async () => {
+  await inUpgradeSchema(async (upgrade) => {
+    await upgrade.query("CREATE TABLE consensus_view_observations (placeholder integer)");
+    await assert.rejects(migrate(upgrade), /consensus_view_observations.*already exists/);
+    const { rows } = await upgrade.query("SELECT to_regclass('schema_migrations') AS ledger, to_regclass('sources') AS sources");
+    assert.deepEqual(rows[0], { ledger: null, sources: null });
+  });
+});
+
+test("real repeated responses retain all wire offsets with one compatible projection per view", async () => {
+  const fixtures = [
+    { file: "live-order-11", projected: 58, view: "8294199", offsets: [20, 22], winner: 22 },
+    { file: "live-order-12", projected: 56, view: "8294794", offsets: [14, 16], winner: 16 },
+  ];
+  for (const sample of fixtures) {
+    const mock = await mockPhase();
+    try {
+      mock.setViews(...fixtureResult(sample.file) as WireView[]);
+      const { id, collector } = await boot(mock, { batchSize: 100 });
+      const result = await collector.pollOnce();
+      assert.equal(result.records, sample.projected);
+      const total = await pool.query("SELECT count(*)::int AS total FROM consensus_view_observations WHERE source_id=$1", [id]);
+      assert.equal(total.rows[0].total, 60);
+      const observation = await inspectViewObservations(pool, id, sample.view);
+      assert.equal(observation.status, "unresolved");
+      const finding = observation.findings.find((item) => item.kind === "signer_membership_variation");
+      assert.deepEqual(finding?.evidence.map((row) => row.responseIndex), sample.offsets);
+      const projection = await pool.query("SELECT current_response_index FROM consensus_views WHERE source_id=$1 AND view_id=$2",
+        [id, sample.view]);
+      assert.equal(projection.rows[0].current_response_index, sample.winner);
+    } finally {
+      await mock.close();
+    }
+  }
+});
+
+test("an occurrence write failure rolls back raw evidence, projection and checkpoint", async () => {
+  const mock = await mockPhase();
+  try {
+    mock.setViews(wireView(100));
+    const { collector, id } = await boot(mock);
+    const checkpoint = await db.checkpoint(id);
+    await pool.query("ALTER TABLE consensus_view_observations ADD CONSTRAINT reject_occurrence CHECK (view_id <> 100)");
+    try {
+      await assert.rejects(collector.pollOnce(), /reject_occurrence/);
+      assert.deepEqual(await db.checkpoint(id), checkpoint);
+      assert.deepEqual(await views(), []);
+      const archive = await pool.query("SELECT id FROM rpc_responses WHERE method = 'phase_getViewRecords'");
+      assert.equal(archive.rowCount, 0);
+      assert.equal((await pool.query("SELECT 1 FROM observation_index_results")).rowCount, 0);
+    } finally {
+      await pool.query("ALTER TABLE consensus_view_observations DROP CONSTRAINT reject_occurrence");
+    }
+    await collector.pollOnce();
+    assert.equal((await db.checkpoint(id)).highViewId, "100");
+  } finally {
+    await mock.close();
+  }
+});
+
+test("bounded backfill recovers empty responses, retains unsupported bodies, and resumes without duplicates", async () => {
+  const mock = await mockPhase();
+  try {
+    const { id } = await boot(mock);
+    const otherRpc = mock.rpc();
+    const otherId = await db.registerSource("http://127.0.0.1:9009", await otherRpc.getIdentity());
+    const input = [
+      [id, 11, Buffer.from(fixture("live-order-11"))],
+      [id, 7, Buffer.from('{"jsonrpc":"2.0","id":7,"result":[]}')],
+      [otherId, 8, Buffer.from("unsupported payload")],
+    ] as const;
+    for (const [source, rpcId, body] of input) {
+      const request = JSON.stringify({ id: rpcId, jsonrpc: "2.0", method: "phase_getViewRecords", params: [null, 60] });
+      await pool.query(
+        "INSERT INTO rpc_responses(source_id, method, purpose, request_body, response_body, observed_at) " +
+        "VALUES($1, 'phase_getViewRecords', 'view_page', $2, $3, now())", [source, request, body],
+      );
+    }
+    assert.equal((await inspectViewObservations(pool, id, "8294199")).status, "unknown");
+    assert.deepEqual(await backfillObservations(pool, 1), { indexed: 1, unsupported: 0, occurrences: 60 });
+    const sampled = await inspectViewObservations(pool, id, "8294199", 1);
+    assert.equal(sampled.status, "unknown");
+    assert.equal(sampled.coverage.truncated, true);
+    const workers = await Promise.all([backfillObservations(pool, 10), backfillObservations(pool, 10)]);
+    assert.equal(workers.reduce((n, row) => n + row.indexed, 0), 1);
+    assert.equal(workers.reduce((n, row) => n + row.unsupported, 0), 1);
+    assert.deepEqual(await backfillObservations(pool, 1), { indexed: 0, unsupported: 0, occurrences: 0 });
+    assert.equal((await inspectViewObservations(pool, id, "8294199")).status, "unresolved");
+    const isolated = await inspectViewObservations(pool, otherId, "8294199");
+    assert.equal(isolated.status, "unknown");
+    assert.equal(isolated.scannedOccurrences, 0);
+    assert.equal(isolated.coverage.unsupported, true);
+    const archive = await pool.query(
+      "SELECT r.response_body, i.outcome, i.occurrence_count FROM rpc_responses r " +
+      "JOIN observation_index_results i ON i.response_id=r.id ORDER BY r.id",
+    );
+    assert.deepEqual(archive.rows, [
+      { response_body: input[0][2], outcome: "indexed", occurrence_count: 60 },
+      { response_body: input[1][2], outcome: "indexed", occurrence_count: 0 },
+      { response_body: input[2][2], outcome: "unsupported", occurrence_count: null },
+    ]);
+    assert.deepEqual(await views(), []);
+    assert.equal((await db.checkpoint(id)).highViewId, null);
+  } finally {
+    await mock.close();
+  }
+});
+
+test("backfill verifies existing occurrence contents before recording completion", async () => {
+  const mock = await mockPhase();
+  try {
+    mock.setViews(wireView(100));
+    const { collector } = await boot(mock);
+    await collector.pollOnce();
+    await pool.query("DELETE FROM observation_index_results");
+    assert.deepEqual(await backfillObservations(pool, 1), { indexed: 1, unsupported: 0, occurrences: 1 });
+    await pool.query("DELETE FROM observation_index_results");
+    await pool.query("UPDATE consensus_view_observations SET normalized_record = '{}'");
+    await assert.rejects(backfillObservations(pool, 1), /Conflicting indexed observations/);
+    assert.equal((await pool.query("SELECT 1 FROM observation_index_results")).rowCount, 0);
+  } finally {
+    await mock.close();
+  }
+});
 
 test("repeated batches keep one projection per view and preserve each raw response", async () => {
   const mock = await mockPhase();
@@ -257,6 +457,11 @@ test("a full page from a custom endpoint does not establish the retention floor"
     const checkpoint = await pool.query("SELECT retention_floor_view_id, last_retention_probe_at FROM collector_checkpoints");
     assert.equal(checkpoint.rows[0].retention_floor_view_id, null);
     assert.ok(checkpoint.rows[0].last_retention_probe_at instanceof Date);
+    const probe = await pool.query(
+      "SELECT i.occurrence_count FROM observation_index_results i JOIN rpc_responses r ON r.id=i.response_id " +
+      "WHERE r.purpose='retention_probe'",
+    );
+    assert.equal(probe.rows[0].occurrence_count, 10_000);
   } finally {
     await mock.close();
   }
@@ -275,9 +480,10 @@ test("a retention-window probe restores a candidate that has moved outside the o
     assert.deepEqual(await activeGaps(), []);
     assert.deepEqual((await views()).map((view) => view.view_id), ["100", "101", "102", "103", "104", "105", "106"]);
     const proof = await pool.query(
-      "SELECT r.purpose FROM consensus_views v JOIN rpc_responses r ON r.id=v.first_response_id WHERE view_id=102",
+      "SELECT r.purpose,v.current_response_index FROM consensus_views v " +
+      "JOIN rpc_responses r ON r.id=v.first_response_id WHERE view_id=102",
     );
-    assert.equal(proof.rows[0].purpose, "retention_probe");
+    assert.deepEqual(proof.rows[0], { purpose: "retention_probe", current_response_index: 3 });
   } finally {
     await mock.close();
   }
@@ -442,6 +648,11 @@ test("overlapping collector instances serialize the checkpoint and preserve supe
     assert.deepEqual((await views()).map((row) => row.view_id), ["100", "101"]);
     const evidence = await pool.query("SELECT purpose FROM rpc_responses WHERE method = 'phase_getViewRecords' ORDER BY id");
     assert.deepEqual(evidence.rows.map((row) => row.purpose), ["view_page", "superseded_poll"]);
+    const indexed = await pool.query(
+      "SELECT i.occurrence_count FROM observation_index_results i JOIN rpc_responses r ON r.id=i.response_id " +
+      "WHERE r.purpose='superseded_poll'",
+    );
+    assert.deepEqual(indexed.rows, [{ occurrence_count: 2 }]);
   } finally {
     await mock.close();
   }

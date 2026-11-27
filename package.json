@@ -9,6 +9,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "db:migrate": "node dist/src/migrate.js",
+    "db:backfill-observations": "node dist/src/observations-main.js backfill",
+    "db:inspect-observations": "node dist/src/observations-main.js inspect",
     "collector": "node dist/src/collector-main.js",
     "api": "node dist/src/api-main.js",
     "test": "npm run build && node --test dist/test/rpc.test.js dist/test/collector.integration.test.js",

@@ -32,6 +32,10 @@ Review the four designs below. The first implementation slice should make repeat
 - **Evidence durability.** Export recovery and PostgreSQL backups protect different parts of state. Keep the existing raw bodies and all evidence references. Database tier changes and retention rules require their own decision.
 - **Release scope.** The work extends the current collector, schema, tests and read API. Additional modules, independent verification, dashboard work and general platform redesign are outside this milestone.
 
-## Approval requested
+## Implementation status
 
-Approve the migration and occurrence-indexing slice, including the response/index identity and how to report unresolved signer variation. Review the historical API contract before route implementation. Confirm storage retention, repository policy and the live-soak schedule separately. This audit adds documentation and awaits approval before implementation.
+Steps 1 and 2 are implemented. A local upgrade preserved 14 raw responses, 163 existing projections, checkpoints and gap records. Backfill indexed 10,180 occurrences across four saved view responses. A second run added zero occurrences. All 39 automated tests passed locally. See the [operator commands](../operations.md#observation-integrity).
+
+## Remaining approvals
+
+Review the historical API contract before implementing the detail route, paging and public integrity fields. Confirm the live-soak schedule, storage retention and repository policy separately.

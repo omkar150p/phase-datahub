@@ -16,6 +16,19 @@ A poll locks its source checkpoint row. It inserts the raw response, upserts vie
 
 The collector creates a sequence-gap candidate only from an ID discontinuity. View timestamps and block heights are separate observations. It labels a missing interval `unrecoverable_from_source` only for the portion below the minimum returned ID in a successful `[null, 10000]` probe. This covers the public endpoint's documented default window. A custom endpoint that fills the probe limit leaves the lower bound uncertain, so its gaps stay candidates. A probe can repair previously missed IDs through the current checkpoint. That label applies to the answering source at the recorded time. The RPC can omit records, so source gaps stay unconfirmed at the protocol level. An empty probe establishes no retention floor. Coverage starts with the first saved result.
 
+## Observation integrity
+
+Run `npm run db:migrate` before restarting the collector with the new schema. The migration runner records the version and checksum of each applied SQL file. It checks the original tables, constraints and indexes before adopting an existing unversioned database. Take a backup before upgrading a populated installation. A mismatched baseline stops the migration and names the tables to inspect.
+
+New view responses save all occurrences using the response ID and zero-based array index. A projection can keep its current occurrence reference in `current_response_index`. Existing projection references remain readable with a null offset. Backfill reads the saved bodies without changing their bytes, the current views or the collector checkpoint.
+
+```sh
+npm run db:backfill-observations -- 25
+npm run db:inspect-observations -- 1 8294199
+```
+
+Backfill processes up to 100 responses per invocation. Run batches until both indexed and unsupported counts are zero. Empty responses count as indexed with zero occurrences. Unsupported responses remain in the archive with a reason in `observation_index_results`. Inspect takes the internal source ID from `sources.id` and a decimal-string view ID. It reports source-scoped findings and evidence offsets across up to 1,000 archived occurrences. Pending, unsupported and truncated coverage are reported separately. The existing HTTP API continues serving the representative view.
+
 ## Configuration
 
 | Variable | Default |

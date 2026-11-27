@@ -47,7 +47,14 @@ export interface RpcResult<T> extends RpcEvidence {
   result: T;
 }
 
+export interface ViewOccurrence {
+  responseIndex: number;
+  record: ConsensusView;
+}
+
 export interface ViewPage extends RpcResult<ConsensusView[]> {
+  occurrences: ViewOccurrence[];
+  projectionIndexes: ReadonlyMap<string, number>;
   wireCount: number;
   duplicateCount: number;
   outOfOrder: boolean;
@@ -139,30 +146,55 @@ function normalizeView(value: unknown): ConsensusView {
 const CERTIFICATE_RANK: Record<CertificateStatus, number> = { none: 0, tentative: 1, full: 2 };
 
 function decodeViewPage(value: unknown, from: bigint | null, limit: number): Pick<
-  ViewPage, "result" | "wireCount" | "duplicateCount" | "outOfOrder"
+  ViewPage, "result" | "occurrences" | "projectionIndexes" | "wireCount" | "duplicateCount" | "outOfOrder"
 > {
   if (!Array.isArray(value) || value.length > limit) return invalid("result");
-  const projected = new Map<bigint, ConsensusView>();
+  const projected = new Map<bigint, ViewOccurrence>();
+  const occurrences: ViewOccurrence[] = [];
   let previous: bigint | undefined;
   let outOfOrder = false;
 
-  for (const item of value) {
+  for (const [responseIndex, item] of value.entries()) {
     const view = normalizeView(item);
+    const occurrence = { responseIndex, record: view };
+    occurrences.push(occurrence);
     const id = BigInt(view.viewId);
     if (from !== null && id < from) return invalid("result fromView");
     if (previous !== undefined && id < previous) outOfOrder = true;
     previous = id;
 
-    const prior = projected.get(id);
+    const prior = projected.get(id)?.record;
     const rank = CERTIFICATE_RANK[view.certificateStatus];
     if (!prior || rank > CERTIFICATE_RANK[prior.certificateStatus] ||
         (rank === CERTIFICATE_RANK[prior.certificateStatus] &&
           BigInt(view.viewTimestampSecs) >= BigInt(prior.viewTimestampSecs))) {
-      projected.set(id, view);
+      projected.set(id, occurrence);
     }
   }
-  const result = [...projected].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, view]) => view);
-  return { result, wireCount: value.length, duplicateCount: value.length - result.length, outOfOrder };
+  const ordered = [...projected].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  const result = ordered.map(([, { record }]) => record);
+  const projectionIndexes = new Map(ordered.map(([, row]) => [row.record.viewId, row.responseIndex]));
+  return { result, occurrences, projectionIndexes, wireCount: value.length,
+    duplicateCount: value.length - result.length, outOfOrder };
+}
+
+export function decodeArchivedViewOccurrences(requestBody: string, responseBody: Buffer): ViewOccurrence[] {
+  let requestJson: unknown;
+  try {
+    requestJson = parse(requestBody);
+  } catch {
+    throw new RpcError("protocol", "Invalid archived JSON-RPC request");
+  }
+  const request = object(requestJson, "archived request");
+  if (request.jsonrpc !== "2.0" || request.method !== VIEW_METHOD ||
+      !Array.isArray(request.params) || request.params.length !== 2) return invalid("archived view request");
+  const id = uint(request.id, "archived request ID");
+  const limit = uint(request.params[1], "archived request limit");
+  if (id > BigInt(Number.MAX_SAFE_INTEGER) || limit < 1n || limit > BigInt(MAX_VIEW_PAGE_SIZE)) {
+    return invalid("archived request ID or limit");
+  }
+  const from = request.params[0] === null ? null : uint(request.params[0], "archived fromView");
+  return decodeViewPage(decodeEnvelope(responseBody, Number(id), 0), from, Number(limit)).occurrences;
 }
 
 async function readResponseBody(response: Response): Promise<Buffer> {

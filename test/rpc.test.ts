@@ -4,8 +4,52 @@ import { readFileSync } from "node:fs";
 import { once } from "node:events";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { MAX_UINT64, RpcError } from "../src/phase-rpc.js";
+import { compareViewObservations, type Observation } from "../src/observation-findings.js";
+import { decodeArchivedViewOccurrences, MAX_UINT64, RpcError } from "../src/phase-rpc.js";
 import { fixture, mockServer, reply, wireView } from "./support.js";
+
+function observations(overrides: Record<string, unknown>[], responseId = "1", receiptMicros = "100"): Observation[] {
+  const request = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "phase_getViewRecords", params: [null, 20] });
+  const result = overrides.map((fields) => wireView(100, { signers: [1, 2], signer_count: 2, ...fields }));
+  const response = Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
+  return decodeArchivedViewOccurrences(request, response).map((entry) => ({ ...entry, responseId, receiptMicros }));
+}
+
+test("comparison distinguishes identical facts, permutations and actual signer discrepancies", () => {
+  const identical = observations([{}, {}]);
+  assert.deepEqual(compareViewObservations(identical, true), { status: "no_discrepancy_observed", findings: [] });
+  const permutations = compareViewObservations(observations([{}, { signers: [2, 1] }]), true);
+  assert.equal(permutations.status, "no_discrepancy_observed");
+  assert.equal(permutations.findings[0]?.kind, "signer_order_variation");
+  const differences = compareViewObservations(
+    observations([{}, { signers: [1, 3], signer_count: 3 }, { signers: [1, 1] }]), false,
+  );
+  assert.equal(differences.status, "unresolved");
+  assert.deepEqual(new Set(differences.findings.map(({ kind }) => kind)), new Set([
+    "signer_membership_variation", "reported_signer_count_variation", "signer_count_mismatch", "duplicate_signer_indices",
+  ]));
+});
+
+test("comparison scopes committee context, block hashes and certificate ordering", () => {
+  const context = compareViewObservations(observations([{}, { committee_round: 1, signers: [3, 4] }]), true);
+  assert.deepEqual(context.findings.map(({ kind }) => kind), ["view_context_variation"]);
+  const hash = "0x" + "a".repeat(64);
+  const changed = compareViewObservations(observations([{}, { block_hash: hash }, { is_tentative: true }]), true);
+  assert.deepEqual(new Set(changed.findings.map(({ kind }) => kind)), new Set([
+    "same_status_hash_variation", "certificate_hash_variation", "full_then_tentative_observed",
+  ]));
+  const metadata = compareViewObservations(observations([{}, { block_height: 123 }]), true);
+  assert.equal(metadata.findings[0]?.kind, "same_status_metadata_variation");
+  assert.equal(metadata.status, "unresolved");
+  const transition = compareViewObservations(observations([{ is_tentative: true }, {}]), true);
+  assert.equal(transition.status, "reported_transition");
+  assert.equal(transition.findings[0]?.kind, "tentative_to_full_observed");
+  const tied = compareViewObservations(
+    [...observations([{ is_tentative: true }]), ...observations([{}], "2")], true,
+  );
+  assert.equal(tied.status, "unresolved");
+  assert.equal(tied.findings[0]?.kind, "certificate_order_ambiguous");
+});
 
 test("captured RPC responses match their manifest", () => {
   const directory = new URL("../../fixtures/phase-mainnet/", import.meta.url);
