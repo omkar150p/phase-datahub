@@ -1,6 +1,17 @@
 # M1.2 historical API scope
 
-This is the implementation brief for human review, dated 27 November 2026. It extends the [historical API design](HISTORICAL_API_DESIGN.md) using the M1.1 observation index on `main` at `d33fc47b7869e29cfb1f979e891a215d8ee16423`. Implementation remains pending.
+This approved implementation brief extends the [historical API design](HISTORICAL_API_DESIGN.md) using the M1.1 observation index on `main` at `d33fc47b7869e29cfb1f979e891a215d8ee16423`.
+
+## Validation result
+
+M1.2 passed local validation on 27 November 2026. The working baseline was `main` at `0bff099a0eb9d68586d331f9630065c06e58d204`, which added the M1.1 audit and the approved plan to the implementation commit cited below.
+
+- `npm ci`, `npm run build` and `npm test` succeeded. The full suite passed 54 tests, including 39 existing M1.1 tests and 15 historical API tests, with zero failures or skips.
+- Fixture replay returned `unresolved` signer membership differences for `8294199`, `8294232` and `8294794`. The API compared at most 1,000 occurrences and returned at most five unique evidence references.
+- The 100,000-view isolated dataset confirmed that the existing composite view primary key supports descending keyset scans and detail lookups. Direct gap lookup used the existing active-gap index. No migration was added.
+- The 24-hour collector soak and external-service readiness remain outside this milestone.
+
+See the [M1.2 completion report](M1_2_COMPLETION_REPORT.md) for the acceptance matrix, response excerpts, plans and timings.
 
 ## 1. Paginate the existing view list
 
@@ -47,6 +58,6 @@ Start with a detail-only summary. Review list summaries after measuring response
 - Exercise conflicting and identical occurrences, partial/unsupported evidence, more occurrences than the scan cap, bounded evidence output and nullable legacy offsets. Use fixture-backed test data for the three historical IDs and assert their unresolved signer differences when seeded.
 - Check the execution plan for descending keyset reads, detail lookup and direct gap lookup. Measure the summary's query latency and response size on an isolated database. Any additional index or list-level summary should be justified by those measurements.
 
-## Review gate
+## Approved scope and follow-up
 
-Approve the list and detail contracts, missing-view precedence and integrity payload before M1.2 starts. The completion audit and this plan are documentation deliverables. The 24-hour collector soak and external-service readiness remain separate validation work. [M1.1 completion report](M1_1_COMPLETION_REPORT.md)
+The list and detail contracts, missing-view precedence and integrity payload formed the approved implementation scope. The 24-hour collector soak and external-service readiness remain separate validation work. [M1.1 completion report](M1_1_COMPLETION_REPORT.md)

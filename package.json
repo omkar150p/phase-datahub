@@ -13,9 +13,9 @@
     "db:inspect-observations": "node dist/src/observations-main.js inspect",
     "collector": "node dist/src/collector-main.js",
     "api": "node dist/src/api-main.js",
-    "test": "npm run build && node --test dist/test/rpc.test.js dist/test/collector.integration.test.js",
+    "test": "npm run build && node --test dist/test/rpc.test.js dist/test/collector.integration.test.js dist/test/historical-api.integration.test.js",
     "test:unit": "npm run build && node --test dist/test/rpc.test.js",
-    "test:integration": "npm run build && node --test dist/test/collector.integration.test.js"
+    "test:integration": "npm run build && node --test dist/test/collector.integration.test.js dist/test/historical-api.integration.test.js"
   },
   "dependencies": {
     "fastify": "5.12.8",
